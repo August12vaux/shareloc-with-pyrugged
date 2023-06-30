@@ -1,0 +1,175 @@
+<html>
+  <body>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+      <div class="mermaid">
+    
+        classDiagram
+          class DTMImage {
+            data
+            datum : NoneType, str
+            stats : dict
+            fill_nodata(strategy, max_search_distance, smoothing_iterations, fill_value)
+          }
+          class DTMIntersection {
+            alt_data : NoneType
+            alt_max : NoneType
+            alt_max_cell : NoneType, ndarray
+            alt_min : NoneType
+            alt_min_cell : ndarray, NoneType
+            dtm_file
+            dtm_image
+            epsg
+            grid_col
+            grid_row
+            origin_x : NoneType
+            origin_y : NoneType
+            pixel_size_x : NoneType
+            pixel_size_y : NoneType
+            plane_coef_a : NoneType, ndarray
+            plane_coef_b : ndarray, NoneType
+            plane_coef_c : NoneType, ndarray
+            plane_coef_d : NoneType, ndarray
+            plans : ndarray
+            tol_z : float
+            eq_plan(i, position)
+            get_alt_offset(epsg)
+            index_to_ter(vect_dtm)
+            init_min_max()
+            interpolate(pos_row, pos_col)
+            intersect_dtm_cube(los)
+            intersection(los, point_b, h_intersect)
+            ter_to_index(vect_ter)
+            ters_to_indexs(vect_ters)
+          }
+          class Grid {
+            alts_down : NoneType
+            col0 : NoneType
+            colmax : NoneType
+            epsg : int
+            filename
+            lat_data : NoneType
+            lon_data : NoneType
+            nbalt : NoneType
+            nbcol : int, NoneType
+            nbrow : NoneType, int
+            repter : NoneType
+            row0 : NoneType
+            rowmax : NoneType
+            stepcol : NoneType
+            steprow : NoneType
+            type : str
+            compute_los(row, col, epsg)
+            direct_loc_dtm(row, col, dtm)
+            direct_loc_grid_dtm(row0, col0, steprow, stepcol, nbrow, nbcol, dtm)
+            direct_loc_grid_h(row0, col0, steprow, stepcol, nbrow, nbcol, alt)
+            direct_loc_h(row, col, alt, fill_nan)
+            estimate_inverse_loc_predictor(nbrow_pred, nbcol_pred)
+            get_alt_min_max()
+            interpolate_grid_in_altitude(nbrow, nbcol, nbalt)
+            interpolate_grid_in_plani(row, col)
+            inverse_loc(lon, lat, alt, nb_iterations)
+            inverse_loc_predictor(lon, lat, alt)
+            inverse_partial_derivative(row, col, alt)
+            load()
+            los_extrema(row, col, alt_min, alt_max)
+            parse_metadata_alti(metadata)
+            return_grid_index(alt)
+          }
+          class Image {
+            data : NoneType, ndarray
+            dataset : DatasetReader, DatasetWriter, BufferedDatasetWriter
+            epsg : NoneType
+            image_path
+            mask : NoneType
+            nb_columns : int
+            nb_rows : int
+            nodata
+            origin_col
+            origin_row
+            pixel_rotation_col
+            pixel_rotation_row
+            pixel_size_col
+            pixel_size_row
+            transform : Affine
+            set_metadata(nb_row, nb_col, nb_band, transform, datatype)
+            transform_index_to_physical_point(row, col)
+            transform_physical_point_to_index(row_geo, col_geo)
+          }
+          class LOS {
+            geometrical_model
+            los_nb
+            sensors_positions
+            sis
+            vis
+            get_sis()
+            get_vis()
+            los_creation(alt_min_max, fill_nan)
+          }
+          class Localization {
+            default_elevation : float, NoneType
+            dtm : NoneType
+            epsg : NoneType
+            image : NoneType
+            model
+            use_rpc
+            direct(row, col, h, using_geotransform)
+            extent(margin)
+            inverse(lon, lat, h, using_geotransform)
+          }
+          class RPC {
+            alt_minmax : list
+            col0
+            colmax
+            datum : str, NoneType
+            den_col : ndarray
+            den_row : ndarray
+            den_x : ndarray
+            den_y : ndarray
+            direct_coefficient : bool
+            epsg : int, NoneType
+            inverse_coefficient : bool
+            lim_extrapol : float
+            monomes : ndarray
+            monomes_deriv_1 : ndarray
+            monomes_deriv_2 : ndarray
+            num_col : ndarray
+            num_row : ndarray
+            num_x : ndarray
+            num_y : ndarray
+            row0
+            rowmax
+            type : str
+            compute_loc_inverse_derivates(lon, lat, alt)
+            direct_loc_dtm(row, col, dtm)
+            direct_loc_grid_h(row0, col0, steprow, stepcol, nbrow, nbcol, alt)
+            direct_loc_h(row, col, alt, fill_nan)
+            direct_loc_inverse_iterative(row, col, alt, nb_iter_max, fill_nan)
+            filter_coordinates(first_coord, second_coord, fill_nan, direction)
+            from_any(primary_file, topleftconvention)
+            from_dimap(dimap_filepath, topleftconvention)
+            from_dimap_v1(dimap_filepath, topleftconvention)
+            from_dimap_v2(dimap_filepath, topleftconvention)
+            from_geotiff(image_filename, topleftconvention)
+            from_ossim_kwl(ossim_kwl_filename, topleftconvention)
+            get_alt_min_max()
+            inverse_loc(lon, lat, alt)
+            los_extrema(row, col, alt_min, alt_max, fill_nan, epsg)
+          }
+          class RectificationGrid {
+            col_dep
+            col_positions
+            filename
+            grid_col
+            grid_row
+            points : tuple
+            row_dep
+            row_positions
+            get_positions()
+            interpolate(positions)
+          }
+          DTMImage --|> Image
+          DTMImage --* DTMIntersection : dtm_image
+  
+       </div>
+  </body>
+</html>

@@ -1,0 +1,56 @@
+<html>
+  <body>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+      <div class="mermaid">
+    
+        classDiagram
+          class shareloc {
+          }
+          class dtm_image {
+          }
+          class geofunctions {
+          }
+          class dtm_intersection {
+          }
+          class localization {
+          }
+          class rectification {
+          }
+          class rectification_grid {
+          }
+          class triangulation {
+          }
+          class geomodels {
+          }
+          class grid {
+          }
+          class los {
+          }
+          class rpc {
+          }
+          class image {
+          }
+          class math_utils {
+          }
+          class proj_utils {
+          }
+          dtm_image --> image
+          dtm_intersection --> dtm_image
+          dtm_intersection --> image
+          dtm_intersection --> math_utils
+          dtm_intersection --> proj_utils
+          localization --> proj_utils
+          rectification --> localization
+          rectification --> image
+          triangulation --> rectification_grid
+          triangulation --> los
+          triangulation --> proj_utils
+          grid --> image
+          grid --> math_utils
+          grid --> proj_utils
+          los --> proj_utils
+          rpc --> proj_utils
+  
+       </div>
+  </body>
+</html>
