@@ -32,10 +32,18 @@ import os
 import numpy as np
 import pytest
 import rasterio
+import pdb
 
 # Shareloc imports
+
+from pyrugged.configuration.init_orekit import init_orekit
+from org.hipparchus.geometry.euclidean.threed import Vector3D
+from pydimaprugged.dimap_parser.phr_parser import PHRParser
+from pyrugged.los.sinusoidal_rotation import SinusoidalRotation
+
+
 from shareloc.geofunctions.dtm_intersection import DTMIntersection
-from shareloc.geofunctions.rectification import (  # write_epipolar_grid,
+from shareloc.geofunctions.rectification import (  write_epipolar_grid,
     compute_epipolar_angle,
     compute_stereorectification_epipolar_grids,
     get_epipolar_extent,
@@ -46,7 +54,14 @@ from shareloc.geofunctions.rectification import (  # write_epipolar_grid,
 from shareloc.geofunctions.rectification_grid import RectificationGrid
 from shareloc.geomodels.grid import Grid
 from shareloc.geomodels.rpc import RPC
+from shareloc.geomodels.pyrugged_geom import Pyrugged_geom
 from shareloc.image import Image
+from shareloc.location_pydimap import Location
+from pyrugged.refraction.multi_layer_model import MultiLayerModel
+from pyrugged.bodies.extended_ellipsoid import ExtendedEllipsoid
+from pyrugged.bodies.body_rotating_frame_id import BodyRotatingFrameId
+from pyrugged.model.pyrugged_builder import select_ellipsoid, select_body_rotating_frame
+from pyrugged.bodies.ellipsoid_id import EllipsoidId
 
 # Shareloc test imports
 from tests.helpers import data_path
@@ -681,3 +696,666 @@ def test_rectification_grid_pos_inside_prepare_footprint_bounding_box():
     # Test that grid_footprint is in epipolar footprint
     assert np.all(np.logical_and(min_row < grid_footprint[:, 0], grid_footprint[:, 0] < max_row))
     assert np.all(np.logical_and(min_col < grid_footprint[:, 1], grid_footprint[:, 1] < max_col))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##############################################################################################################################
+
+
+
+
+def write_diff_grid(path,grid):
+
+    row, col = np.shape(grid)
+
+    with rasterio.open(
+        path, "w", driver="GTiff", dtype=np.float64, width=col, height=row, count=1
+    ) as source_ds:
+            source_ds.write(grid, 1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+@pytest.mark.unit_tests
+def test_compute_stereorectification_epipolar_grids_geomodel_pyrugged():
+    """
+    Test epipolar grids generation : check epipolar grids, epipolar image size, mean_baseline_ratio
+
+    Input Geomodels: Pyrugged_geom
+    Earth elevation: default to 0.0
+    """
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,None,None,None)
+    geom_right = Pyrugged_geom(file_dimap_right,None,None,None)
+
+    epi_step = 60
+    elevation_offset = 50
+    default_elev = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_left.light_time,
+            aberration_light = geom_left.aberration_light,
+            atmospheric_refraction = geom_left.atmospheric_refraction,
+            )
+    elev_2 = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+
+
+    left_grid, right_grid, img_size_row, img_size_col, mean_br = compute_stereorectification_epipolar_grids(
+        left_im, geom_left, right_im, geom_right, default_elev, epi_step, elevation_offset,elev_2
+    )
+
+
+    #print("\n\n\n DEBUT RPC \n\n")
+
+    geom_model_left = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    )
+    geom_model_right = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+    )
+ 
+    left_grid_rpc, right_grid_rpc, img_size_row_rpc, img_size_col_rpc, mean_br_rpc = compute_stereorectification_epipolar_grids(
+        left_im, geom_model_left, right_im, geom_model_right, 0.0, epi_step, elevation_offset
+    )
+
+    right_row = abs(right_grid.data[0, :, :]-right_grid_rpc.data[0, :, :])
+    left_row = abs(left_grid.data[0, :, :]-right_grid_rpc.data[0, :, :])
+    right_col = abs(right_grid.data[1, :, :]-right_grid_rpc.data[1, :, :])
+    left_col = abs(left_grid.data[1, :, :]-right_grid_rpc.data[1, :, :])
+
+
+    # #write grid
+    # write_diff_grid( "/new_cars/left_col_0.tif",left_col)
+    # write_diff_grid( "/new_cars/left_row_0.tif",left_row)
+    # write_diff_grid( "/new_cars/right_col_0.tif",right_col)
+    # write_diff_grid( "/new_cars/right_row_0.tif",right_row)
+
+
+
+    print("\n\n",np.amax(right_row))
+    print(np.amax(right_col))
+
+    assert left_grid.data[0, :, :] == pytest.approx(left_grid_rpc.data[0, :, :], abs=2e-2)
+    assert left_grid.data[1, :, :] == pytest.approx(left_grid_rpc.data[1, :, :], abs=2e-2)
+    assert right_grid.data[0, :, :] == pytest.approx(right_grid_rpc.data[0, :, :], abs=9e-2)
+    assert right_grid.data[1, :, :] == pytest.approx(right_grid_rpc.data[1, :, :], abs=3e-2)
+    assert img_size_row == pytest.approx(img_size_row_rpc, abs=1e-8)
+    assert img_size_col == pytest.approx(img_size_col_rpc, abs=1e-8)
+    assert mean_br == pytest.approx(mean_br_rpc, abs=2e-5)
+
+
+   
+
+
+
+@pytest.mark.unit_tests
+def test_compute_stereorectification_epipolar_grids_geomodel_pyrugged_alti():
+    """
+    Test epipolar grids generation : check epipolar grids, epipolar image size, mean_baseline_ratio
+
+    Input Geomodels: Pyrugged_geom
+    Earth elevation: default to 100.0
+    """
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,None,None,None)
+    geom_right = Pyrugged_geom(file_dimap_right,None,None,None)
+
+    epi_step = 60
+    elevation_offset = 50
+    alti = 100.0
+    default_elev = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=alti,
+            light_time = geom_left.light_time,
+            aberration_light = geom_left.aberration_light,
+            atmospheric_refraction = geom_left.atmospheric_refraction,
+            )
+    elev_2 = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=alti,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+
+
+    left_grid, right_grid, img_size_row, img_size_col, mean_br = compute_stereorectification_epipolar_grids(
+        left_im, geom_left, right_im, geom_right, default_elev, epi_step, elevation_offset,elev_2
+    )
+
+
+
+    geom_model_left = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    )
+    geom_model_right = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+    )
+ 
+    left_grid_rpc, right_grid_rpc, img_size_row_rpc, img_size_col_rpc, mean_br_rpc = compute_stereorectification_epipolar_grids(
+        left_im, geom_model_left, right_im, geom_model_right, alti, epi_step, elevation_offset
+    )
+
+
+    right_row = abs(right_grid.data[0, :, :]-right_grid_rpc.data[0, :, :])
+    right_col = abs(right_grid.data[1, :, :]-right_grid_rpc.data[1, :, :])
+
+    print(np.amax(right_row))
+    print(np.amax(right_col))
+
+    assert left_grid.data[0, :, :] == pytest.approx(left_grid_rpc.data[0, :, :], abs=1e-2)
+    assert left_grid.data[1, :, :] == pytest.approx(left_grid_rpc.data[1, :, :], abs=1e-2)
+    assert right_grid.data[0, :, :] == pytest.approx(right_grid_rpc.data[0, :, :], abs=9e-2)
+    assert right_grid.data[1, :, :] == pytest.approx(right_grid_rpc.data[1, :, :], abs=3e-2)
+    assert img_size_row == pytest.approx(img_size_row_rpc, abs=1e-8)
+    assert img_size_col == pytest.approx(img_size_col_rpc, abs=1e-8)
+    assert mean_br == pytest.approx(mean_br_rpc, abs=2e-5)
+
+
+
+
+
+
+@pytest.mark.unit_tests
+def test_compute_stereorectification_epipolar_grids_geomodel_pyrugged_dtm_geoid():
+    """
+    Test epipolar grids generation : check epipolar grids, epipolar image size, mean_baseline_ratio
+
+    Input Geomodels: Pyrugged_geom
+    Earth elevation: DTM + GEOID
+    """
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,None,None,None)
+    geom_right = Pyrugged_geom(file_dimap_right,None,None,None)
+
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90"#_only_s38"
+    geoid_file = "/new_cars/shareloc/tests/data/pyrugged/rectification/egm96.grd"
+
+    epi_step = 120
+    elevation_offset = 50
+    default_elev = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = None,
+            aberration_light = None,
+            atmospheric_refraction = None,
+            )
+    elev_2 = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = None,
+            aberration_light = None,
+            atmospheric_refraction = None,
+            )
+    
+    left_grid, right_grid, img_size_row, img_size_col, mean_br = compute_stereorectification_epipolar_grids(
+        left_im, geom_left, right_im, geom_right, default_elev, epi_step, elevation_offset,elev_2
+    )
+
+
+    geom_model_left = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    )
+    geom_model_right = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+    )
+
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90_only_s38/e144/s38.dt1"
+    geoid_file = os.path.join(data_path(), "dtm", "geoid", "egm96_15.gtx")
+    dtm_ventoux = DTMIntersection(dtm_file, geoid_file)
+
+ 
+    left_grid_rpc, right_grid_rpc, img_size_row_rpc, img_size_col_rpc, mean_br_rpc = compute_stereorectification_epipolar_grids(
+        left_im, geom_model_left, right_im, geom_model_right, dtm_ventoux, epi_step, elevation_offset
+    )
+
+    # right_row = abs(right_grid.data[0, :, :]-right_grid_rpc.data[0, :, :])
+    # right_col = abs(right_grid.data[1, :, :]-right_grid_rpc.data[1, :, :])
+
+    # # write grid
+    
+    # # write_diff_grid( "/new_cars/left_col_dtm.tif",left_col)
+    # # write_diff_grid( "/new_cars/left_row_dtm.tif",left_row)
+    # write_diff_grid( "/new_cars/right_diff_col_dtm.tif",right_col)
+    # write_diff_grid( "/new_cars/right_diff_row_dtm.tif",right_row)
+
+
+
+    assert left_grid.data[0, :, :] == pytest.approx(left_grid_rpc.data[0, :, :], abs=1e-2)
+    assert left_grid.data[1, :, :] == pytest.approx(left_grid_rpc.data[1, :, :], abs=1e-2)
+    assert right_grid.data[0, :, :] == pytest.approx(right_grid_rpc.data[0, :, :], abs=9e-2)
+    assert right_grid.data[1, :, :] == pytest.approx(right_grid_rpc.data[1, :, :], abs=1e-1)
+    assert img_size_row == pytest.approx(img_size_row_rpc, abs=1e-8)
+    assert img_size_col == pytest.approx(img_size_col_rpc, abs=1e-8)
+    assert mean_br == pytest.approx(mean_br_rpc, abs=1e-5)
+
+
+
+
+
+@pytest.mark.unit_tests
+def test_compute_stereorectification_epipolar_grids_geomodel_pyrugged_correction():
+    """
+    Test epipolar grids generation : check epipolar grids, epipolar image size, mean_baseline_ratio
+
+    Input Geomodels: Pyrugged_geom
+    Earth elevation: default to 100.0
+    """
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    #conf = static_cfg.load_config()
+    px_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_PIXEL_STEP]=100
+    line_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_LINE_STEP]
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+    atmospheric_refraction.set_grid_steps(px_step, line_step)
+
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,True,True,atmospheric_refraction)
+    geom_right = Pyrugged_geom(file_dimap_right,True,True,atmospheric_refraction)
+
+    epi_step = 60
+    elevation_offset = 50
+    default_elev = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_left.light_time,
+            aberration_light = geom_left.aberration_light,
+            atmospheric_refraction = geom_left.atmospheric_refraction,
+            )
+    elev_2 = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+
+
+    left_grid, right_grid, img_size_row, img_size_col, mean_br = compute_stereorectification_epipolar_grids(
+        left_im, geom_left, right_im, geom_right, default_elev, epi_step, elevation_offset,elev_2
+    )
+
+
+    #print("\n\n\n DEBUT RPC \n\n")
+
+    geom_model_left = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    )
+    geom_model_right = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+    )
+ 
+    left_grid_rpc, right_grid_rpc, img_size_row_rpc, img_size_col_rpc, mean_br_rpc = compute_stereorectification_epipolar_grids(
+        left_im, geom_model_left, right_im, geom_model_right, 0.0, epi_step, elevation_offset
+    )
+
+    right_row = abs(right_grid.data[0, :, :]-right_grid_rpc.data[0, :, :])
+    left_row = abs(left_grid.data[0, :, :]-left_grid_rpc.data[0, :, :])
+    right_col = abs(right_grid.data[1, :, :]-right_grid_rpc.data[1, :, :])
+    left_col = abs(left_grid.data[1, :, :]-left_grid_rpc.data[1, :, :])
+
+
+    # #write grid
+    # write_diff_grid( "/new_cars/left_col_0.tif",left_col)
+    # write_diff_grid( "/new_cars/left_row_0.tif",left_row)
+    # write_diff_grid( "/new_cars/right_col_0.tif",right_col)
+    # write_diff_grid( "/new_cars/right_row_0.tif",right_row)
+
+
+    print("Rectif alt 0.0 with correction")
+    print(np.amax(right_row))
+    print(np.amax(right_col))
+    print(np.amax(left_row))
+    print(np.amax(left_col),end="\n\n")
+    print(abs(mean_br-mean_br_rpc))
+
+    assert left_grid.data[0, :, :] == pytest.approx(left_grid_rpc.data[0, :, :], abs=2e-2)
+    assert left_grid.data[1, :, :] == pytest.approx(left_grid_rpc.data[1, :, :], abs=2e-2)
+    assert right_grid.data[0, :, :] == pytest.approx(right_grid_rpc.data[0, :, :], abs=10)
+    assert right_grid.data[1, :, :] == pytest.approx(right_grid_rpc.data[1, :, :], abs=10)
+    assert img_size_row == pytest.approx(img_size_row_rpc, abs=1e-8)
+    assert img_size_col == pytest.approx(img_size_col_rpc, abs=1e-8)
+    assert mean_br == pytest.approx(mean_br_rpc, abs=1e-3)
+
+
+
+
+
+
+
+
+@pytest.mark.unit_tests
+def test_compute_stereorectification_epipolar_grids_geomodel_pyrugged_dtm_geoid_correction():
+    """
+    Test epipolar grids generation : check epipolar grids, epipolar image size, mean_baseline_ratio
+
+    Input Geomodels: Pyrugged_geom
+    Earth elevation: DTM + GEOID
+    """
+
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    #conf = static_cfg.load_config()
+    px_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_PIXEL_STEP]=100
+    line_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_LINE_STEP]
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+    atmospheric_refraction.set_grid_steps(px_step, line_step)
+
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,True,True,atmospheric_refraction)
+    geom_right = Pyrugged_geom(file_dimap_right,True,True,atmospheric_refraction)
+
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90"
+    geoid_file = "/new_cars/shareloc/tests/data/pyrugged/rectification/egm96.grd"
+
+    epi_step = 60
+    elevation_offset = 50
+    default_elev = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+    elev_2 = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+    
+    left_grid, right_grid, img_size_row, img_size_col, mean_br = compute_stereorectification_epipolar_grids(
+        left_im, geom_left, right_im, geom_right, default_elev, epi_step, elevation_offset,elev_2
+    )
+
+
+    geom_model_left = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    )
+    geom_model_right = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+    )
+
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90_only_s38/e144/s38.dt1"
+    geoid_file = os.path.join(data_path(), "dtm", "geoid", "egm96_15.gtx")
+    dtm_ventoux = DTMIntersection(dtm_file, geoid_file)
+
+ 
+    left_grid_rpc, right_grid_rpc, img_size_row_rpc, img_size_col_rpc, mean_br_rpc = compute_stereorectification_epipolar_grids(
+        left_im, geom_model_left, right_im, geom_model_right, dtm_ventoux, epi_step, elevation_offset
+    )
+
+    right_row = abs(right_grid.data[0, :, :]-right_grid_rpc.data[0, :, :])
+    right_col = abs(right_grid.data[1, :, :]-right_grid_rpc.data[1, :, :])
+    left_row = abs(left_grid.data[0, :, :]-left_grid_rpc.data[0, :, :])
+    left_col = abs(left_grid.data[1, :, :]-left_grid_rpc.data[1, :, :])
+
+    # write grid
+    write_diff_grid( "/new_cars/left_col_dtm.tif",left_col)
+    write_diff_grid( "/new_cars/left_row_dtm.tif",left_row)
+    write_diff_grid( "/new_cars/right_diff_col_dtm.tif",right_col)
+    write_diff_grid( "/new_cars/right_diff_row_dtm.tif",right_row)
+
+    print("Rectif DTM with correction")
+    print(np.amax(abs(left_grid.data[0, :, :]-left_grid_rpc.data[0, :, :])))
+    print(np.amax(abs(left_grid.data[1, :, :]-left_grid_rpc.data[1, :, :])))
+    print(np.amax(abs(right_grid.data[0, :, :]-right_grid_rpc.data[0, :, :])))
+    print(np.amax(abs(right_grid.data[1, :, :]-right_grid_rpc.data[1, :, :])),end="\n\n")
+
+    # Rectif DTM with correction
+    # 0.0029982045818996994
+    # 0.008901000728201325
+    # 5.80162125891502
+    # 1.5637583463671945
+
+
+    assert left_grid.data[0, :, :] == pytest.approx(left_grid_rpc.data[0, :, :], abs=1e-2)
+    assert left_grid.data[1, :, :] == pytest.approx(left_grid_rpc.data[1, :, :], abs=1e-2)
+    assert right_grid.data[0, :, :] == pytest.approx(right_grid_rpc.data[0, :, :], abs=10)
+    assert right_grid.data[1, :, :] == pytest.approx(right_grid_rpc.data[1, :, :], abs=10)
+    assert img_size_row == pytest.approx(img_size_row_rpc, abs=1e-8)
+    assert img_size_col == pytest.approx(img_size_col_rpc, abs=1e-8)
+    assert mean_br == pytest.approx(mean_br_rpc, abs=1e-3)
+
+
+
+@pytest.mark.unit_tests
+def test_compute_stereorectification_epipolar_grids_geomodel_pyrugged_dtm_geoid_correction_sinusoid():
+    """
+    Test epipolar grids generation : check epipolar grids, epipolar image size, mean_baseline_ratio
+
+    Input Geomodels: Pyrugged_geom
+    Earth elevation: DTM + GEOID
+    """
+    init_orekit()
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    #conf = static_cfg.load_config()
+    px_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_PIXEL_STEP]=100
+    line_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_LINE_STEP]
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+    atmospheric_refraction.set_grid_steps(px_step, line_step)
+
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,True,True,atmospheric_refraction)
+    geom_right = Pyrugged_geom(file_dimap_right,True,True,atmospheric_refraction)
+
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90"
+    geoid_file = "/new_cars/shareloc/tests/data/pyrugged/rectification/egm96.grd"
+
+    epi_step = 300
+    elevation_offset = 50
+    default_elev = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+    
+
+    abs_date = PHRParser(file_dimap_right,"just_for_time_ref").start_time
+    amp = 0.2e-6
+    freq = 30
+    phase = 0
+
+    elev_2 = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            transforms=[SinusoidalRotation("sinRot", Vector3D.PLUS_J, abs_date, amp, freq, phase)],
+            )
+    
+    left_grid, right_grid, img_size_row, img_size_col, mean_br = compute_stereorectification_epipolar_grids(
+        left_im, geom_left, right_im, geom_right, default_elev, epi_step, elevation_offset,elev_2
+    )
+
+
+    elev_2_ref = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            transforms=[SinusoidalRotation("sinRot", Vector3D.PLUS_J, abs_date, 0, freq, phase)],
+            )
+
+    left_grid_ref, right_grid_ref, img_size_row_ref, img_size_col_ref, mean_br_ref = compute_stereorectification_epipolar_grids(
+        left_im, geom_left, right_im, geom_right, default_elev, epi_step, elevation_offset,elev_2_ref
+    )
+
+
+
+    # right_row = abs(right_grid.data[0, :, :]-right_grid_ref.data[0, :, :])
+    # right_col = abs(right_grid.data[1, :, :]-right_grid_ref.data[1, :, :])
+    # left_row = abs(left_grid.data[0, :, :]-left_grid_ref.data[0, :, :])
+    # left_col = abs(left_grid.data[1, :, :]-left_grid_ref.data[1, :, :])
+
+    # # write grid
+    # write_diff_grid( "/new_cars/left_col_dtm.tif",left_col)
+    # write_diff_grid( "/new_cars/left_row_dtm.tif",left_row)
+    # write_diff_grid( "/new_cars/right_diff_col_dtm.tif",right_col)
+    # write_diff_grid( "/new_cars/right_diff_row_dtm.tif",right_row)
+
+    print("Rectif DTM with correction")
+    print(np.amax(abs(left_grid.data[0, :, :]-left_grid_ref.data[0, :, :])))
+    print(np.amax(abs(left_grid.data[1, :, :]-left_grid_ref.data[1, :, :])))
+    print(np.amax(abs(right_grid.data[0, :, :]-right_grid_ref.data[0, :, :])))
+    print(np.amax(abs(right_grid.data[1, :, :]-right_grid_ref.data[1, :, :])),end="\n\n")
+
+    # Rectif DTM with correction
+    # 0.0029982045818996994
+    # 0.008901000728201325
+    # 5.80162125891502
+    # 1.5637583463671945
+
+
+    assert left_grid.data[0, :, :] == pytest.approx(left_grid_ref.data[0, :, :], abs=1e-2)
+    assert left_grid.data[1, :, :] == pytest.approx(left_grid_ref.data[1, :, :], abs=1e-2)
+    assert right_grid.data[0, :, :] == pytest.approx(right_grid_ref.data[0, :, :], abs=0.9)
+    assert right_grid.data[1, :, :] == pytest.approx(right_grid_ref.data[1, :, :], abs=1e-2)
+    assert img_size_row == pytest.approx(img_size_row_ref, abs=1e-8)
+    assert img_size_col == pytest.approx(img_size_col_ref, abs=1e-8)
+    assert mean_br == pytest.approx(mean_br_ref, abs=1e-3)

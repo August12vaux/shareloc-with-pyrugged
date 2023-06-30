@@ -31,8 +31,19 @@ import os
 import numpy as np
 import pytest
 
+# import cProfile
+# import io
+# import pstats
+# from pstats import SortKey
+
+from pyrugged.configuration.init_orekit import init_orekit
+from org.hipparchus.geometry.euclidean.threed import Vector3D
+from pydimaprugged.dimap_parser.phr_parser import PHRParser
+from pyrugged.los.sinusoidal_rotation import SinusoidalRotation
+
 from shareloc.geofunctions.dtm_intersection import DTMIntersection
 from shareloc.geofunctions.localization import Localization
+from shareloc.geomodels.pyrugged_geom import Pyrugged_geom
 from shareloc.geofunctions.localization import coloc as coloc_rpc
 
 # Shareloc imports
@@ -40,6 +51,13 @@ from shareloc.geomodels.grid import Grid, coloc
 from shareloc.geomodels.rpc import RPC
 from shareloc.image import Image
 from shareloc.proj_utils import coordinates_conversion
+from shareloc.location_pydimap import Location
+from pyrugged.refraction.multi_layer_model import MultiLayerModel
+from pyrugged.bodies.extended_ellipsoid import ExtendedEllipsoid
+from pyrugged.bodies.body_rotating_frame_id import BodyRotatingFrameId
+from pyrugged.model.pyrugged_builder import select_ellipsoid, select_body_rotating_frame
+from pyrugged.bodies.ellipsoid_id import EllipsoidId
+import pydimaprugged.static_configuration as static_cfg
 
 # Shareloc test imports
 from ..helpers import data_path
@@ -644,3 +662,927 @@ def test_sensor_loc_dir_dtm_multi_points():
     col = np.array([10.0, 20.5])
     points = loc.direct(row, col)
     print(points)
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_loc_direct_pyrugged(col,row):
+    """
+    Test direct localization with pyrugged_geom
+    """
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/localization/DIM_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    geom = Pyrugged_geom(file_dimap,None,None,None)
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+    image = Image("/new_cars/shareloc/tests/data/pyrugged/localization/IMG_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001_R1C1.TIFF")
+    localization = Localization(geom, elevation=location_dimap, image=image, epsg=4326)
+    coords = localization.direct([row], [col], h=None, using_geotransform=False).transpose()
+
+    coords_ref =location_dimap.location.direct_location([row], [col],None,"sensor_a")
+    print("coords : ",coords)
+    print("coords_ref : ",np.degrees(np.array(coords_ref)))
+
+    assert coords[0] == pytest.approx(np.degrees(np.array(coords_ref[0])), abs=0)
+    assert coords[1] == pytest.approx(np.degrees(np.array(coords_ref[1])), abs=0)
+    assert coords[2] == pytest.approx(np.array(coords_ref[2]), abs=0)
+
+
+@pytest.mark.parametrize("col,row,alt", [(5000.0, 5000.0, 10)])
+@pytest.mark.unit_tests
+def test_loc_direct_pyrugged_alt(col,row,alt):
+    """
+    Test direct localization with pyrugged_geom with altitude
+    """
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/localization/DIM_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    geom = Pyrugged_geom(file_dimap,None,None,None)
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=alt,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+    image = Image("/new_cars/shareloc/tests/data/pyrugged/localization/IMG_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001_R1C1.TIFF")
+    localization = Localization(geom, elevation=location_dimap, image=image, epsg=4326)
+    coords = localization.direct([row], [col], h=alt, using_geotransform=False).transpose()
+
+    coords_ref =location_dimap.location.direct_location([row], [col], [alt],"sensor_a")
+
+    print(abs(np.degrees(np.array(coords_ref[0:2]))-coords[0:2]))
+    assert coords[0:2] == pytest.approx(np.degrees(np.array(coords_ref[0:2])), abs=0)
+
+
+@pytest.mark.parametrize("lon,lat,alt", [(144.86952644029716, -37.78510620778207, 0.0)]) #degrees
+@pytest.mark.unit_tests
+def test_loc_inverse_pyrugged(lon,lat,alt):
+    """
+    Test inverse localization with pyrugged_geom
+    """
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/localization/DIM_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    geom = Pyrugged_geom(file_dimap,None,None,None)
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+    
+    image_left = Image("/new_cars/shareloc/tests/data/pyrugged/localization/IMG_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001_R1C1.TIFF")
+    localization = Localization(geom, elevation=location_dimap, image=image_left, epsg=4326)
+    coords = localization.inverse([lon],[lat],[alt], using_geotransform=False)
+
+    pyrugged = location_dimap.location.rugged
+    line_sensor = pyrugged.sensors["sensor_a"]
+    min_line = line_sensor.get_line(pyrugged.min_date)
+    max_line = line_sensor.get_line(pyrugged.max_date)
+    coords_ref = location_dimap.location.inverse_location(min_line, max_line, np.radians([lat]), np.radians([lon]), [alt], "sensor_a")
+
+    print("coords[0:2] : ",coords[0:2])
+    print("coords_ref : ",coords_ref)
+
+    assert coords[0] == pytest.approx(coords_ref[0], abs=0)
+    assert coords[1] == pytest.approx(coords_ref[1], abs=0)
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_colocalization_pyrugged_identity(col, row):
+    """
+    Test colocalization function using Pyrurgged ( "coloc_rpc" -> use also pyrugged)
+    """
+
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    geom = Pyrugged_geom(file_dimap,None,None,None)
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+
+    row_coloc, col_coloc, _ = coloc_rpc(geom, geom, row, col, location_dimap)
+    print("row",np.amax(abs(np.array(row_coloc)-np.array(row))))
+    print("col",np.amax(abs(np.array(col_coloc)-np.array(col))))
+    assert row == pytest.approx(row_coloc, abs=1e-6) #coloc précise à 1e-6
+    assert col == pytest.approx(col_coloc, abs=1e-8)
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_sensor_coloc_pyrugged(col, row):
+    """
+    Test direct colocalization using image geotransform
+    """
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,None,None,None)
+    geom_right = Pyrugged_geom(file_dimap_right,None,None,None)
+
+    elev_left = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_left.light_time,
+            aberration_light = geom_left.aberration_light,
+            atmospheric_refraction = geom_left.atmospheric_refraction,
+            )
+
+    elev_right = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+
+    #called "coloc_rpc" but it use the shareloc colo function workibng with rpc and pyrugged
+
+    row_coloc, col_coloc, _ = coloc_rpc(
+        geom_left, geom_right, row, col, elev_left, left_im, right_im, using_geotransform=True,elevation2=elev_right
+    )
+
+
+    row, col = left_im.transform_index_to_physical_point(row, col)
+    direct_ref =elev_left.location.direct_location([row], [col],None,"sensor_a") #line,pix -> lon,lat,alt
+
+    pyrugged = elev_right.location.rugged
+    line_sensor = pyrugged.sensors["sensor_b"]
+    min_line = line_sensor.get_line(pyrugged.min_date)
+    max_line = line_sensor.get_line(pyrugged.max_date)
+    coloc_ref = elev_right.location.inverse_location(min_line, max_line, direct_ref[1], direct_ref[0], direct_ref[2], "sensor_b")#lat,lon,alt -> line,pix
+    row_ref, col_ref = right_im.transform_physical_point_to_index(np.array(coloc_ref[0]), np.array(coloc_ref[1]))
+
+
+    print('row_coloc',row_coloc)
+    print('type(row_coloc)',type(row_coloc))
+    print('row_ref',row_ref)
+    print('type(row_ref)',type(row_ref))
+
+    print("row_coloc-row_ref",row_coloc-row_ref)
+    print("col_coloc-col_ref",col_coloc-col_ref)
+
+    assert row_coloc == pytest.approx(row_ref, abs=1e-8)
+    assert col_coloc == pytest.approx(col_ref, abs=1e-8)
+
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_sensor_coloc_pyrugged_dem(col, row):
+    """
+    Test direct colocalization using image geotransform
+    """
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,None,None,None)
+    geom_right = Pyrugged_geom(file_dimap_right,None,None,None)
+
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90"
+    geoid_file = os.path.join(data_path(), "dtm", "geoid", "egm96_15.gtx")
+
+    elev_left = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_left.light_time,
+            aberration_light = geom_left.aberration_light,
+            atmospheric_refraction = geom_left.atmospheric_refraction,
+            )
+
+    elev_right = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+
+    #called "coloc_rpc" but it use the shareloc coloc function workibng with rpc and pyrugged
+    row_coloc, col_coloc, _ = coloc_rpc(
+        geom_left, geom_right, row, col, elev_left, left_im, right_im, using_geotransform=True,elevation2=elev_right
+    )
+
+    row, col = left_im.transform_index_to_physical_point(row, col)
+    direct_ref =elev_left.location.direct_location([row], [col], None,"sensor_a") #line,pix -> lon,lat,alt
+
+    pyrugged = elev_right.location.rugged
+    line_sensor = pyrugged.sensors["sensor_b"]
+    min_line = line_sensor.get_line(pyrugged.min_date)
+    max_line = line_sensor.get_line(pyrugged.max_date)
+    coloc_ref = elev_right.location.inverse_location(min_line, max_line, direct_ref[1], direct_ref[0], direct_ref[2], "sensor_b")#lat,lon,alt -> line,pix
+    row_ref, col_ref = right_im.transform_physical_point_to_index(np.array(coloc_ref[0]), np.array(coloc_ref[1]))
+
+    assert row_coloc == row_ref
+    assert col_coloc == col_ref
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_loc_direct_pyrugged_with_correction(col,row):
+    """
+    Test direct localization with pyrugged_geom
+    """
+
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+
+
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/localization/DIM_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    geom = Pyrugged_geom(file_dimap,True,True,atmospheric_refraction)
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+    image = Image("/new_cars/shareloc/tests/data/pyrugged/localization/IMG_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001_R1C1.TIFF")
+    localization = Localization(geom, elevation=location_dimap, image=image, epsg=4326)
+    coords = localization.direct([row], [col], h=None, using_geotransform=False).transpose()
+
+    coords_ref =location_dimap.location.direct_location([row], [col], None,"sensor_a")
+
+    assert coords[0] == pytest.approx(np.degrees(np.array(coords_ref[0])), abs=0)
+    assert coords[1] == pytest.approx(np.degrees(np.array(coords_ref[1])), abs=0)
+    assert coords[2] == pytest.approx(np.array(coords_ref[2]), abs=0)
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_loc_direct_pyrugged_multi_alti_without_correction(col,row):
+    """
+    Test direct localization with pyrugged_geom
+    """
+
+    row = np.array([row]*5)
+    col = np.array([col]*5)
+    alt = np.array([0.0,10.0,25.3,86.5,400.2])
+
+
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/localization/DIM_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    geom = Pyrugged_geom(file_dimap,False,False,None)
+    # geom = Pyrugged_geom(file_dimap,True,True,atmospheric_refraction)
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+    image = Image("/new_cars/shareloc/tests/data/pyrugged/localization/IMG_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001_R1C1.TIFF")
+    localization = Localization(geom, elevation=location_dimap, image=image, epsg=4326)
+    coords = localization.direct(row, col, h=alt, using_geotransform=False).transpose()
+
+    coords_ref =location_dimap.location.direct_location(row, col, alt,"sensor_a")
+
+    geom_model_RPC = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/localization/RPC_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    )
+    localizationRPC = Localization(geom_model_RPC, elevation=None, image=image, epsg=4326)
+    coords_ref_RPC = localizationRPC.direct(row, col, h=alt, using_geotransform=False)
+
+    coords = coords.T
+    coords_ref = np.array(coords_ref).T
+    coords_ref[:,:2] = np.degrees(coords_ref[:,:2])
+
+    diffRPC = abs(coords-coords_ref_RPC)
+
+    print("\n\nabs(coords-coord_ref_RPC) : \n",diffRPC)
+    print("abs(coords-coord_ref) : \n",abs(coords-coords_ref))
+
+    assert coords[:,:2] == pytest.approx(coords_ref[:,:2],abs=0)
+    assert coords[:,2] == pytest.approx(coords_ref[:,2],abs=0)
+    assert coords[:,:2] == pytest.approx(coords_ref_RPC[:,:2],abs=1e-7)
+    assert coords[:,2] == pytest.approx(coords_ref_RPC[:,2],abs=1e-3)
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_loc_direct_pyrugged_multi_alti_with_correction(col,row):
+    """
+    Test direct localization with pyrugged_geom
+    """
+
+    row = np.array([row]*5)
+    col = np.array([col]*5)
+    alt = np.array([0.0,10.0,25.3,86.5,400.2])
+
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+
+
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/localization/DIM_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    geom = Pyrugged_geom(file_dimap,True,True,atmospheric_refraction)
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+    image = Image("/new_cars/shareloc/tests/data/pyrugged/localization/IMG_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001_R1C1.TIFF")
+    localization = Localization(geom, elevation=location_dimap, image=image, epsg=4326)
+    coords = localization.direct(row, col, h=alt, using_geotransform=False).transpose()
+
+    coords_ref =location_dimap.location.direct_location(row, col, alt,"sensor_a")
+
+    geom_model_RPC = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/localization/RPC_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    )
+    localizationRPC = Localization(geom_model_RPC, elevation=None, image=image, epsg=4326)
+    coords_ref_RPC = localizationRPC.direct(row, col, h=alt, using_geotransform=False)
+
+    coords = coords.T
+    coords_ref = np.array(coords_ref).T
+    coords_ref[:,:2] = np.degrees(coords_ref[:,:2])
+
+    diffRPC = abs(coords-coords_ref_RPC)
+
+    print("coords : ",coords)
+    print("coords_ref_RPC : ",coords_ref_RPC)
+    print("abs(coords-coord_ref_RPC) : \n",diffRPC)
+    #print("abs(coords-coord_ref) : \n",abs(coords-coords_ref))
+
+    ecart_absolu_moyen = np.sum(diffRPC,axis=0)/len(alt)
+    print("écart absolui moyen : ",ecart_absolu_moyen)
+
+    assert coords[:,:2] == pytest.approx(coords_ref[:,:2],abs=0)
+    assert coords[:,2] == pytest.approx(coords_ref[:,2],abs=0)
+    assert coords[:,:2] == pytest.approx(coords_ref_RPC[:,:2],abs=2e-4)
+    assert coords[:,2] == pytest.approx(coords_ref_RPC[:,2],abs=1e-3)
+
+
+
+
+@pytest.mark.parametrize("lon,lat", [(144.86952644029716, -37.78510620778207)]) #degrees
+@pytest.mark.unit_tests
+def test_loc_inverse_pyrugged_multi_alti_with_correction(lon,lat):
+    """
+    Test inverse localization with pyrugged_geom
+    """
+
+    lon = np.array([lon]*5)
+    lat = np.array([lat]*5)
+    alt = np.array([0.0,10.0,25.3,86.5,400.2])
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    #conf = static_cfg.load_config()
+    px_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_PIXEL_STEP]=100
+    line_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_LINE_STEP]
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+    atmospheric_refraction.set_grid_steps(px_step, line_step)
+
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/localization/DIM_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    geom = Pyrugged_geom(file_dimap,True,True,atmospheric_refraction)
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+    
+    image = Image("/new_cars/shareloc/tests/data/pyrugged/localization/IMG_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001_R1C1.TIFF")
+    localization = Localization(geom, elevation=location_dimap, image=image, epsg=4326)
+    coords = localization.inverse(lon,lat,alt, using_geotransform=False)
+
+    pyrugged = location_dimap.location.rugged
+    line_sensor = pyrugged.sensors["sensor_a"]
+    min_line = line_sensor.get_line(pyrugged.min_date)
+    max_line = line_sensor.get_line(pyrugged.max_date)
+    coords_ref = location_dimap.location.inverse_location(min_line, max_line, np.radians(lat), np.radians(lon), alt, "sensor_a")
+
+    geom_model_RPC = RPC.from_any(
+        "/new_cars/shareloc/tests/data/pyrugged/localization/RPC_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    )
+    localizationRPC = Localization(geom_model_RPC, elevation=None, image=image, epsg=4326)
+    coords_ref_RPC = localizationRPC.inverse(lon, lat, h=alt, using_geotransform=False)
+
+    print("coords[0] : ",abs(coords[0]-coords_ref[0]))
+    print("coords[1] : ",abs(coords[1]-coords_ref[1]))
+
+    print("coordsRPC[0] : ",abs(coords[0]-coords_ref_RPC[0]))
+    print("coordsRPC[1] : ",abs(coords[1]-coords_ref_RPC[1]))
+
+    #pyrugged or orekit cache make this tiny differences
+    assert coords[0] == pytest.approx(coords_ref[0], abs=1e-3)
+    assert coords[1] == pytest.approx(coords_ref[1], abs=1e-8)
+
+    # 1pix =~ 0.7m ->42*0.7=29,4m -> relevant with corrections
+    assert coords[0] == pytest.approx(coords_ref_RPC[0], abs=42)
+    assert coords[1] == pytest.approx(coords_ref_RPC[1], abs=10)
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_sensor_coloc_pyrugged_with_correction(col, row):
+    """
+    Test direct colocalization using image geotransform
+    """
+
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    #conf = static_cfg.load_config()
+    px_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_PIXEL_STEP]=100
+    line_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_LINE_STEP]
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+    atmospheric_refraction.set_grid_steps(px_step, line_step)
+
+
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,True,True,atmospheric_refraction)
+    geom_right = Pyrugged_geom(file_dimap_right,True,True,atmospheric_refraction)
+
+    elev_left = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_left.light_time,
+            aberration_light = geom_left.aberration_light,
+            atmospheric_refraction = geom_left.atmospheric_refraction,
+            )
+
+    elev_right = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+    #called "coloc_rpc" but it use the shareloc colo function workibng with rpc and pyrugged
+    row_coloc, col_coloc, _ = coloc_rpc(
+        geom_left, geom_right, row, col, elev_left, left_im, right_im, using_geotransform=True,elevation2=elev_right
+    )
+
+
+    file_dimap_left_RPC="/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right_RPC="/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+    geom_left = RPC.from_any(file_dimap_left_RPC)
+    geom_right = RPC.from_any(file_dimap_right_RPC)
+    row_coloc_RPC, col_coloc_RPC, _ = coloc_rpc(
+        geom_left, geom_right, row, col, 0.0, left_im, right_im, using_geotransform=True,elevation2=None
+    )
+
+    row, col = left_im.transform_index_to_physical_point(row, col)
+    direct_ref =elev_left.location.direct_location([row], [col],None,"sensor_a") #line,pix -> lon,lat,alt
+    pyrugged = elev_right.location.rugged
+    line_sensor = pyrugged.sensors["sensor_b"]
+    min_line = line_sensor.get_line(pyrugged.min_date)
+    max_line = line_sensor.get_line(pyrugged.max_date)
+    coloc_ref = elev_right.location.inverse_location(min_line, max_line, direct_ref[1], direct_ref[0], direct_ref[2], "sensor_b")#lat,lon,alt -> line,pix
+    row_ref, col_ref = right_im.transform_physical_point_to_index(np.array(coloc_ref[0]), np.array(coloc_ref[1]))
+
+
+    print("diff row ref : ",np.amax(abs(np.array(row_coloc)-np.array(row_ref))))
+    print("diff col ref: ",np.amax(abs(np.array(col_coloc)-np.array(col_ref))))
+    print("diff row RPC: ",np.amax(abs(np.array(row_coloc)-np.array(row_coloc_RPC))))
+    print("diff col RPC: ",np.amax(abs(np.array(col_coloc)-np.array(col_coloc_RPC))))
+
+    assert row_coloc == pytest.approx(row_ref, abs=1e-5)
+    assert col_coloc == pytest.approx(col_ref, abs=1e-8)
+    assert row_coloc == pytest.approx(row_coloc_RPC, abs=30)
+    assert col_coloc == pytest.approx(col_coloc_RPC, abs=10)
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_sensor_coloc_pyrugged_dem_with_correction(col, row):
+    """
+    Test direct colocalization using image geotransform
+    """
+
+    # pr = cProfile.Profile()
+    # pr.enable()
+
+    row = np.array([row])
+    col = np.array([col])
+
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    
+    #conf = static_cfg.load_config()
+    px_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_PIXEL_STEP]=100
+    line_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_LINE_STEP]
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+    atmospheric_refraction.set_grid_steps(px_step, line_step)
+
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,True,True,atmospheric_refraction)
+    geom_right = Pyrugged_geom(file_dimap_right,True,True,atmospheric_refraction)
+
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90"
+    geoid_file = os.path.join(data_path(), "dtm", "geoid", "egm96_15.gtx")
+
+    elev_left = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_left.light_time,
+            aberration_light = geom_left.aberration_light,
+            atmospheric_refraction = geom_left.atmospheric_refraction,
+            )
+
+    elev_right = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            )
+
+    #called "coloc_rpc" but it use the shareloc coloc function workibng with rpc and pyrugged
+    row_coloc, col_coloc, _ = coloc_rpc(
+        geom_left, geom_right, row, col, elev_left, left_im, right_im, using_geotransform=True,elevation2=elev_right
+    )
+
+    file_dimap_left_RPC="/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right_RPC="/new_cars/shareloc/tests/data/pyrugged/rectification/RPC_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+    geom_left = RPC.from_any(file_dimap_left_RPC)
+    geom_right = RPC.from_any(file_dimap_right_RPC)
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90/e144/s38.dt1"
+    dtm_ventoux = DTMIntersection(dtm_file, geoid_file)
+    row_coloc_RPC, col_coloc_RPC, _ = coloc_rpc(
+        geom_left, geom_right, row, col, dtm_ventoux, left_im, right_im, using_geotransform=True,elevation2=None
+    )
+
+    row, col = left_im.transform_index_to_physical_point(row, col)
+    direct_ref =elev_left.location.direct_location(row, col, None,"sensor_a") #line,pix -> lon,lat,alt
+    pyrugged = elev_right.location.rugged
+    line_sensor = pyrugged.sensors["sensor_b"]
+    min_line = line_sensor.get_line(pyrugged.min_date)
+    max_line = line_sensor.get_line(pyrugged.max_date)
+    coloc_ref = elev_right.location.inverse_location(min_line, max_line, direct_ref[1], direct_ref[0], direct_ref[2], "sensor_b")#lat,lon,alt -> line,pix
+    row_ref, col_ref = right_im.transform_physical_point_to_index(np.array(coloc_ref[0]), np.array(coloc_ref[1]))
+
+
+
+    print("row_coloc : ",row_coloc)
+    print("col_coloc : ",col_coloc)
+    print("row_ref : ",row_ref)
+    print("col_ref : ",col_ref)
+    print("row_coloc_RPC : ",row_coloc_RPC)
+    print("col_coloc_RPC : ",col_coloc_RPC)
+    print("row : ",np.amax(abs(np.array(row_coloc)-np.array(row_ref))))
+    print("col : ",np.amax(abs(np.array(col_coloc)-np.array(col_ref))))
+    print("row RPC : ",np.amax(abs(np.array(row_coloc)-np.array(row_coloc_RPC))))
+    print("col RPC : ",np.amax(abs(np.array(col_coloc)-np.array(col_coloc_RPC))))
+
+    assert row_coloc == pytest.approx(row_ref, abs=1e-5)
+    assert col_coloc == pytest.approx(col_ref, abs=4e-9)
+    assert row_coloc == pytest.approx(row_coloc_RPC, abs=30)
+    assert col_coloc == pytest.approx(col_coloc_RPC, abs=10)
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_loc_pyrugged_multi_alti_with_correction_sinusoid(col,row):
+    """
+    Test direct localization with pyrugged_geom
+    """
+    init_orekit()
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    px_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_PIXEL_STEP]=100
+    line_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_LINE_STEP]
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+    atmospheric_refraction.set_grid_steps(px_step, line_step)
+
+
+    file_dimap="/new_cars/shareloc/tests/data/pyrugged/localization/DIM_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001.XML"
+    geom = Pyrugged_geom(file_dimap,True,True,atmospheric_refraction)
+
+    abs_date = PHRParser(file_dimap,"just_for_time_ref").start_time
+    amp = 0.2e-6
+    freq = 30
+    phase = 0
+
+    location_dimap = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            transforms=[SinusoidalRotation("sinRot", Vector3D.PLUS_J, abs_date, amp, freq, phase)],
+            )
+    
+    # Same parametre as pydimap test localization
+    t_pertub_max = 1 / (4 * freq) + 1 / freq  # 1 period margin
+    rugged = location_dimap.location.rugged
+    rate = rugged.sensors["sensor_a"].get_rate()
+    line_pert_max = t_pertub_max * rate
+    line_pert_max = int(line_pert_max)
+    lines = np.array(list(range(line_pert_max - 500, line_pert_max + 501)))  # len=1001
+    pixels = np.array(list(range(0, 1001)))
+    alt = np.array(list(range(0, 1001)))
+
+    image = Image("/new_cars/shareloc/tests/data/pyrugged/localization/IMG_PHR1A_P_201202250025599_SEN_PRG_FC_5847-001_R1C1.TIFF")
+    localization = Localization(geom, elevation=location_dimap, image=image, epsg=4326)
+    coords = localization.direct(lines, pixels, h=alt, using_geotransform=False)
+
+    location_dimap_ref = Location(
+            dimap=geom.dimap,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=None,
+            geoid_path=None,
+            alti_over_ellipsoid=0.0,
+            light_time = geom.light_time,
+            aberration_light = geom.aberration_light,
+            atmospheric_refraction = geom.atmospheric_refraction,
+            )
+    
+    localization_ref = Localization(geom, elevation=location_dimap_ref, image=image, epsg=4326)
+    coords_ref = localization_ref.direct(lines, pixels, h=alt, using_geotransform=False)
+
+
+
+    diffref = abs(coords-coords_ref)
+    # print("diff lon m : ",np.amax(diffref[:,0])/8.9e-6)#only with PHR
+    # print("diff lat m : ",np.amax(diffref[:,1])/8.9e-6)
+    # print("diff alt m : ",np.amax(diffref[:,2]))
+
+    # PHR 1 m lon/lat ->8.9e-3 deg
+    # 0.2e-6rad satellite LOS -> 0.139m= decalage max (doit être atteint)
+    # tout ça ne sont que des approximation grossières
+    assert np.amax(diffref[:,1])/8.9e-6 == pytest.approx(0.139,abs=0.01)# tanguage donc assert pertinent que sur les lignes/lat
+    assert coords[:,2] == pytest.approx(coords_ref[:,2],abs=1e-5)
+
+
+
+    # ASSERT INVERSE LOC
+    # pert max at index 501
+    lines,pixels,altitudes = localization.inverse(coords_ref[450:551,0],coords_ref[450:551,1],coords_ref[450:551,2], using_geotransform=False)
+    lines_ref,pixels_ref,altitudes_ref = localization_ref.inverse(coords_ref[450:551,0],coords_ref[450:551,1],coords_ref[450:551,2], using_geotransform=False)
+
+    # print("diff inv lines : ",np.amax(abs(lines_ref-lines)))
+    # print("diff inv pixels : ",np.amax(abs(pixels_ref-pixels)))
+    # print("diff inv altitudes : ",np.amax(abs(altitudes_ref-altitudes)))
+
+    # diff inv lines :  0.28407875711582165
+    # diff inv pixels :  0.0002224332015998698
+    # diff inv altitudes :  0.0
+
+    #same tolerance as compute coloc grid test pydimap
+    assert lines_ref == pytest.approx(lines_ref,abs=0.29)
+    assert pixels == pytest.approx(pixels_ref,abs=1e-3)
+    assert altitudes == pytest.approx(altitudes_ref,abs=0)
+
+
+@pytest.mark.parametrize("col,row", [(5000.0, 5000.0)])
+@pytest.mark.unit_tests
+def test_sensor_coloc_pyrugged_dem_with_correction_sinusoid(col, row):
+    """
+    Test direct colocalization using image geotransform
+    """
+
+    init_orekit()
+
+    row = np.array([row]*5)
+    col = np.array([col]*5)
+    alt = np.array([0.0,10.2,23.6,55.9,289.2])
+
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+    
+    #conf = static_cfg.load_config()
+    px_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_PIXEL_STEP]=100
+    line_step = 1000#conf[static_cfg.ATMOSPHERIC_GRID_LINE_STEP]
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+    atmospheric_refraction.set_grid_steps(px_step, line_step)
+
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/rectification/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    left_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001_R1C1.TIFF")
+    right_im = Image("/new_cars/shareloc/tests/data/pyrugged/rectification/IMG_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001_R1C1.TIFF")
+
+    geom_left = Pyrugged_geom(file_dimap_left,True,True,atmospheric_refraction)
+    geom_right = Pyrugged_geom(file_dimap_right,True,True,atmospheric_refraction)
+
+    dtm_file =  "/new_cars/shareloc/tests/data/pyrugged/rectification/PlanetDEM90"
+    geoid_file = os.path.join(data_path(), "dtm", "geoid", "egm96_15.gtx")
+
+
+
+    elev_left = Location(
+            file_dimap_left,
+            sensor_name="sensor_a",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_left.light_time,
+            aberration_light = geom_left.aberration_light,
+            atmospheric_refraction = geom_left.atmospheric_refraction,
+            )
+
+
+    abs_date = PHRParser(file_dimap_right,"just_for_time_ref").start_time
+    amp = 0.2e-6
+    freq = 30
+    phase = 0
+    elev_right = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            transforms=[SinusoidalRotation("sinRot", Vector3D.PLUS_J, abs_date, amp, freq, phase)],
+            )
+
+    #called "coloc_rpc" but it use the shareloc coloc function workibng with rpc and pyrugged
+    row_coloc, col_coloc, _ = coloc_rpc(
+        geom_left, geom_right, row, col, elev_left, left_im, right_im, using_geotransform=True,elevation2=elev_right,altitude=alt
+    )
+
+    elev_right_ref = Location(
+            file_dimap_right,
+            sensor_name="sensor_b",
+            physical_data_dir=None,
+            dem_path=dtm_file,
+            geoid_path=geoid_file,
+            alti_over_ellipsoid=0.0,
+            light_time = geom_right.light_time,
+            aberration_light = geom_right.aberration_light,
+            atmospheric_refraction = geom_right.atmospheric_refraction,
+            transforms=[SinusoidalRotation("sinRot", Vector3D.PLUS_J, abs_date, 0, freq, phase)],
+            )
+
+    row_coloc_ref, col_coloc_ref, _ = coloc_rpc(
+        geom_left, geom_right, row, col, elev_left, left_im, right_im, using_geotransform=True,elevation2=elev_right_ref,altitude=alt
+    )
+
+    print("row_coloc : ",row_coloc)
+    print("col_coloc : ",col_coloc)
+    print("row_coloc_ref : ",row_coloc_ref)
+    print("col_coloc_ref : ",col_coloc_ref)
+
+    print("row : ",np.amax(abs(np.array(row_coloc)-np.array(row_coloc_ref))))
+    print("col : ",np.amax(abs(np.array(col_coloc)-np.array(col_coloc_ref))))
+ 
+
+    assert row_coloc == pytest.approx(row_coloc_ref, abs=0.29)
+    assert col_coloc == pytest.approx(col_coloc_ref, abs=1e-3)

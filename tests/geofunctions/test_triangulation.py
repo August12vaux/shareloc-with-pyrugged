@@ -35,11 +35,29 @@ import pickle
 # Third party imports
 import numpy as np
 import pytest
+import xarray as xr
+import tifffile as tiff
+import rasterio
+import otbApplication
+import matplotlib.pyplot as plt
+
+from pyrugged.configuration.init_orekit import init_orekit
+from org.hipparchus.geometry.euclidean.threed import Vector3D
+from pydimaprugged.dimap_parser.phr_parser import PHRParser
+from pyrugged.los.sinusoidal_rotation import SinusoidalRotation
 
 # Shareloc imports
-from shareloc.geofunctions.triangulation import distance_point_los, epipolar_triangulation, sensor_triangulation
+from shareloc.geofunctions.triangulation import distance_point_los, epipolar_triangulation, sensor_triangulation, transform_disp_to_matches
 from shareloc.geomodels.grid import Grid
 from shareloc.geomodels.rpc import RPC
+from shareloc.geomodels.pyrugged_geom import Pyrugged_geom
+from shareloc.proj_utils import coordinates_conversion
+
+from pyrugged.refraction.multi_layer_model import MultiLayerModel
+from pyrugged.bodies.extended_ellipsoid import ExtendedEllipsoid
+from pyrugged.bodies.body_rotating_frame_id import BodyRotatingFrameId
+from pyrugged.model.pyrugged_builder import select_ellipsoid, select_body_rotating_frame
+from pyrugged.bodies.ellipsoid_id import EllipsoidId
 
 # Shareloc test imports
 from ..helpers import data_path
@@ -367,3 +385,198 @@ def test_epi_triangulation_disp_grid_masked():
     )
 
     assert np.array_equal(point_ecef[0, :], [0, 0, 0])
+
+@pytest.mark.unit_tests
+def test_epi_triangulation_sift_pyrugged():
+    """
+    Test epipolar triangulation
+    """
+
+    init_orekit()
+
+    ellipsoid_id=EllipsoidId.WGS84
+    body_rotating_frame_id=BodyRotatingFrameId.ITRF
+    new_ellipsoid = select_ellipsoid(ellipsoid_id, select_body_rotating_frame(body_rotating_frame_id))
+
+    ellipsoid = ExtendedEllipsoid(
+        new_ellipsoid.equatorial_radius,
+        new_ellipsoid.flattening,
+        new_ellipsoid.body_frame,
+        )
+
+    atmospheric_refraction = MultiLayerModel(ellipsoid)
+
+    file_dimap_left="/new_cars/shareloc/tests/data/pyrugged/triangulation/DIM_PHR1A_P_201202250026276_SEN_PRG_FC_5109-001.XML"
+    file_dimap_right="/new_cars/shareloc/tests/data/pyrugged/triangulation/DIM_PHR1A_P_201202250025329_SEN_PRG_FC_5110-001.XML"
+
+    geom_left_no_effects = Pyrugged_geom(file_dimap_left,None,None,None)
+    geom_right_no_effects = Pyrugged_geom(file_dimap_right,None,None,None)
+
+    geom_left_lightTime = Pyrugged_geom(file_dimap_left,True,None,None)
+    geom_right_lightTime = Pyrugged_geom(file_dimap_right,True,None,None)
+
+    geom_left_aber = Pyrugged_geom(file_dimap_left,None,True,None)
+    geom_right_aber = Pyrugged_geom(file_dimap_right,None,True,None)
+
+    geom_left_refra = Pyrugged_geom(file_dimap_left,None,None,atmospheric_refraction)
+    geom_right_refra = Pyrugged_geom(file_dimap_right,None,None,atmospheric_refraction)
+
+    geom_left_all = Pyrugged_geom(file_dimap_left,True,True,atmospheric_refraction)
+    geom_right_all = Pyrugged_geom(file_dimap_right,True,True,atmospheric_refraction)
+
+    abs_date = PHRParser(file_dimap_right,"just_for_time_ref").start_time
+    amp = 0.2e-6
+    freq = 30
+    phase = 0
+    transforms=[SinusoidalRotation("sinRot", Vector3D.PLUS_J, abs_date, amp, freq, phase)]
+    #même transfo donc même referentiel de temps
+    geom_left_sinusoid = Pyrugged_geom(file_dimap_left,None,None,None,transforms)
+    geom_right_sinusoid = Pyrugged_geom(file_dimap_right,None,None,None,transforms)
+
+
+    grid_left_filename = "/new_cars/shareloc/tests/data/pyrugged/triangulation/left_el0_st60.tif"
+    grid_right_filename = "/new_cars/shareloc/tests/data/pyrugged/triangulation/right_el0_st60.tif"
+
+    #grilles générées avec l'OTB 7.4 qui génére des artéfacts dans les grilles de stréréorectification
+    #  voir (issue gitlab pydimaprugged).
+    #Il est donc quasiment certain de la grille de droite soit imprécise. Cependant cela n'a aucun effets sur la
+    #comparaison des résultats car elle a été passée en argument des 2 fonctions que l'on compare.
+ 
+
+    im = tiff.imread('/new_cars/shareloc/tests/data/pyrugged/triangulation/disp_trian_otb_size.tif')
+    disp_map = np.squeeze(np.array(im)[:,:,0])#take only horizonatal disparity
+
+    #disp2matches
+    col, row = np.meshgrid(list(range(np.shape(disp_map)[1])), list(range(np.shape(disp_map)[0])))
+    epi_left_pos = np.vstack((col.flatten(), row.flatten()))
+    epi_right_pos = np.vstack((col.flatten() + disp_map.flatten(), row.flatten()))
+    matches = np.vstack((epi_left_pos,epi_right_pos)).transpose()
+
+    tiff.imsave("/new_cars/shareloc/tests/data/pyrugged/triangulation/matches.tif",matches)
+
+    _, point_wsg84_no_effects, _ = epipolar_triangulation(
+        matches, None, "sift", geom_left_no_effects, geom_right_no_effects, grid_left_filename, grid_right_filename
+    )
+    #print("\n\n LIGHT TIME")
+    _, point_wsg84_lightTime, _ = epipolar_triangulation(
+        matches, None, "sift", geom_left_lightTime, geom_right_lightTime, grid_left_filename, grid_right_filename
+    )
+    #print("\n\n ABERRATION")
+    _, point_wsg84_aber, _ = epipolar_triangulation(
+        matches, None, "sift", geom_left_aber, geom_right_aber, grid_left_filename, grid_right_filename
+    )
+    #print("\n\n REFRACTION")
+    _, point_wsg84_refra, _ = epipolar_triangulation(
+        matches, None, "sift", geom_left_refra, geom_right_refra, grid_left_filename, grid_right_filename
+    )
+    #print("\n\n ALL ")
+    _, point_wsg84_all, _ = epipolar_triangulation(
+        matches, None, "sift", geom_left_all, geom_right_all, grid_left_filename, grid_right_filename
+    )
+
+    _, point_wsg84_sinusoid, _ = epipolar_triangulation(
+        matches, None, "sift", geom_left_sinusoid, geom_right_sinusoid, grid_left_filename, grid_right_filename
+    )
+
+    ref = tiff.imread('/new_cars/shareloc/tests/data/pyrugged/triangulation/out_trian_otb_macthes.tif')
+    ref = np.squeeze(np.array(ref)) #(1156,3)
+
+
+    print("\n\n\nNO EFFECTS : ")
+    print("diff lon lat : ",np.amax(abs(point_wsg84_no_effects[:,:2]-ref[:,:2])))
+    print("diff alt : ",np.amax(abs(point_wsg84_no_effects[:,2]-ref[:,2])))
+    print("diff moy lon lat : ",np.mean(abs(point_wsg84_no_effects[:,:2]-ref[:,:2])))
+    print("diff moy alt : ",np.mean(abs(point_wsg84_no_effects[:,2]-ref[:,2])))
+
+    print("\nlight time : ")
+    print("diff lon lat : ",np.amax(abs(point_wsg84_lightTime[:,:2]-ref[:,:2])))
+    print("diff alt : ",np.amax(abs(point_wsg84_lightTime[:,2]-ref[:,2])))
+    print("diff moy lon lat : ",np.mean(abs(point_wsg84_lightTime[:,:2]-ref[:,:2])))
+    print("diff moy alt : ",np.mean(abs(point_wsg84_lightTime[:,2]-ref[:,2])))
+
+    print("\n aberation : ")
+    print("diff lon lat : ",np.amax(abs(point_wsg84_aber[:,:2]-ref[:,:2])))
+    print("diff alt : ",np.amax(abs(point_wsg84_aber[:,2]-ref[:,2])))
+    print("diff moy lon lat : ",np.mean(abs(point_wsg84_aber[:,:2]-ref[:,:2])))
+    print("diff moy alt : ",np.mean(abs(point_wsg84_aber[:,2]-ref[:,2])))
+
+    print("\n refraction : ")
+    print("diff lon lat : ",np.amax(abs(point_wsg84_refra[:,:2]-ref[:,:2])))
+    print("diff alt : ",np.amax(abs(point_wsg84_refra[:,2]-ref[:,2])))
+    print("diff moy lon lat : ",np.mean(abs(point_wsg84_refra[:,:2]-ref[:,:2])))
+    print("diff moy alt : ",np.mean(abs(point_wsg84_refra[:,2]-ref[:,2]))) #ref>point_wsg84_refra
+
+    print("\n ALL EFFECTS : ")
+    print("diff lon lat : ",np.amax(abs(point_wsg84_all[:,:2]-ref[:,:2])))
+    print("diff alt : ",np.amax(abs(point_wsg84_all[:,2]-ref[:,2])))
+    print("diff moy lon lat : ",np.mean(abs(point_wsg84_all[:,:2]-ref[:,:2])))
+    print("diff moy alt : ",np.mean(abs(point_wsg84_all[:,2]-ref[:,2])))
+
+    print("\n SINSOIDE : ")
+    print("diff lon lat : ",np.amax(abs(point_wsg84_sinusoid[:,:2]-ref[:,:2])))
+    print("diff alt : ",np.amax(abs(point_wsg84_sinusoid[:,2]-ref[:,2])))
+    print("diff moy lon lat : ",np.mean(abs(point_wsg84_sinusoid[:,:2]-ref[:,:2])))
+    print("diff moy alt : ",np.mean(abs(point_wsg84_sinusoid[:,2]-ref[:,2])))
+
+    # NO EFFECTS : 
+    # diff lon lat :  1.0416779360866713e-05
+    # diff alt :  0.07731775846332312
+    # diff moy lon lat :  3.428182015879545e-06
+    # diff moy alt :  0.07730821765005383
+
+    # light time : 
+    # diff lon lat :  1.5072462446141799e-05
+    # diff alt :  0.07662536483258009
+    # diff moy lon lat :  5.047817216657328e-06
+    # diff moy alt :  0.07661597216727412
+
+    # aberation : 
+    # diff lon lat :  0.00016958894725149776
+    # diff alt :  0.07987968903034925
+    # diff moy lon lat :  0.0001015626917113774
+    # diff moy alt :  0.07983300366332581
+
+    # refraction : 
+    # diff lon lat :  1.041670068957501e-05
+    # diff alt :  3.0431363340467215
+    # diff moy lon lat :  3.4283000181334193e-06
+    # diff moy alt :  3.042824337484515
+
+    # ALL EFFECTS : 
+    # diff lon lat :  0.00016958907256992006
+    # diff alt :  3.044966835528612
+    # diff moy lon lat :  0.00010671462768416442
+    # diff moy alt :  3.0446522487198555
+
+    # SINSOIDE : 
+    # diff lon lat :  1.0412989865926647e-05
+    # diff alt :  0.21486869174987078
+    # diff moy lon lat :  3.661427923192322e-06
+    # diff moy alt :  0.15304525217821235
+
+
+
+    assert point_wsg84_no_effects[:,:2] == pytest.approx(ref[:,:2], abs=2e-5)
+    assert point_wsg84_no_effects[:,2] == pytest.approx(ref[:,2], abs=0.1)
+
+    assert point_wsg84_lightTime[:,:2] == pytest.approx(ref[:,:2], abs=2e-5)
+    assert point_wsg84_lightTime[:,2] == pytest.approx(ref[:,2], abs=0.1)
+
+    assert point_wsg84_aber[:,:2] == pytest.approx(ref[:,:2], abs=2e-4)
+    assert point_wsg84_aber[:,2] == pytest.approx(ref[:,2], abs=0.1)
+
+    assert point_wsg84_refra[:,:2] == pytest.approx(ref[:,:2], abs=2e-5)
+    assert point_wsg84_refra[:,2] == pytest.approx(ref[:,2], abs=5)
+
+    assert point_wsg84_all[:,:2] == pytest.approx(ref[:,:2], abs=2e-4)
+    assert point_wsg84_all[:,2] == pytest.approx(ref[:,2], abs=5)
+
+    assert point_wsg84_sinusoid[:,:2] == pytest.approx(point_wsg84_no_effects[:,:2], abs=2e-5)
+    assert point_wsg84_sinusoid[:,2] == pytest.approx(point_wsg84_no_effects[:,2], abs=0.3)
+
+
+
+
+
+
+    

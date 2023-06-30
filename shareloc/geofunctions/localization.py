@@ -31,7 +31,11 @@ import numbers
 import numpy as np
 
 # Shareloc imports
+from pyrugged.configuration.init_orekit import init_orekit
 from shareloc.proj_utils import coordinates_conversion
+from shareloc.location_pydimap import Location
+
+init_orekit()
 
 
 class Localization:
@@ -45,7 +49,7 @@ class Localization:
         Localization constructor
 
         :param model: geometric model
-        :type model: shareloc.grid or  shareloc.rpc
+        :type model: shareloc.grid or  shareloc.rpc or pyrugged_geom
         :param elevation: dtm or default elevation over ellipsoid if None elevation is set to 0
         :type elevation: shareloc.dtm or float or np.ndarray
         :param image: image class to handle geotransform
@@ -65,6 +69,8 @@ class Localization:
         self.epsg = epsg
 
     def direct(self, row, col, h=None, using_geotransform=False):
+
+        #diff localization entre rpc et pyrugged de 1 npour les colles -> bizarre
         """
         direct localization
 
@@ -82,15 +88,54 @@ class Localization:
         if using_geotransform and self.image is not None:
             row, col = self.image.transform_index_to_physical_point(row, col)
 
-        if h is not None:
-            coords = self.model.direct_loc_h(row, col, h)
-            epsg = self.model.epsg
-        elif self.dtm is not None:
-            coords = self.model.direct_loc_dtm(row, col, self.dtm)
-            epsg = self.dtm.epsg
-        else:
-            coords = self.model.direct_loc_h(row, col, self.default_elevation)
-            epsg = self.model.epsg
+        if self.model.__class__.__name__!="Pyrugged_geom":
+            if h is not None:
+                coords = self.model.direct_loc_h(row, col, h)
+                epsg = self.model.epsg
+            elif self.dtm is not None:
+                coords = self.model.direct_loc_dtm(row, col, self.dtm)
+                epsg = self.dtm.epsg
+            else:
+                coords = self.model.direct_loc_h(row, col, self.default_elevation)
+                epsg = self.model.epsg
+        else:#pyrugged geom used
+            if self.dtm is not None:
+                coords = self.model.direct_loc(row=row, col=col, alt=h, location_dimap=self.dtm)
+                epsg = self.model.epsg
+            elif h is not None:
+                location_dimap = Location(
+                    self.model.dimap,
+                    sensor_name="sensor_a",
+                    physical_data_dir=None,
+                    dem_path=None,
+                    geoid_path=None,
+                    alti_over_ellipsoid=0.0,
+                    light_time = self.model.light_time,
+                    aberration_light = self.model.aberration_light,
+                    atmospheric_refraction = self.model.atmospheric_refraction,
+                    transforms = self.model.transforms,
+                    )
+                self.dtm = location_dimap
+                coords = self.model.direct_loc(row, col, h, self.dtm)
+                epsg = self.model.epsg
+
+
+            else:#no location_dimap so we create one
+                location_dimap = Location(
+                    self.model.dimap,
+                    sensor_name="sensor_a",
+                    physical_data_dir=None,
+                    dem_path=None,
+                    geoid_path=None,
+                    alti_over_ellipsoid=0.0,
+                    light_time = self.model.light_time,
+                    aberration_light = self.model.aberration_light,
+                    atmospheric_refraction = self.model.atmospheric_refraction,
+                    transforms = self.model.transforms,
+                    )
+                self.dtm = location_dimap
+                coords = self.model.direct_loc(row, col, self.default_elevation, self.dtm)
+                epsg = self.model.epsg
         if self.epsg is not None and self.epsg != epsg:
             return coordinates_conversion(coords, epsg, self.epsg)
         return coords
@@ -136,7 +181,7 @@ class Localization:
         :rtype: Tuple(1D np.ndarray row position, 1D np.ndarray col position, 1D np.ndarray alt)
         """
 
-        if not self.use_rpc and not hasattr(self.model, "pred_ofset_scale_lon"):
+        if not self.use_rpc and not hasattr(self.model, "pred_ofset_scale_lon") and self.model.__class__.__name__!="Pyrugged_geom":#grid geom
             self.model.estimate_inverse_loc_predictor()
         if h is None:
             h = self.default_elevation
@@ -153,28 +198,50 @@ class Localization:
             converted_coords = coordinates_conversion(coords, self.epsg, self.model.epsg)
             lon = converted_coords[:, 0]
             lat = converted_coords[:, 1]
-            h = converted_coords[:, 2]
-        row, col, __ = self.model.inverse_loc(lon, lat, h)
+            h = converted_coords[:, 2] 
+        
+        if self.model.__class__.__name__!="Pyrugged_geom":
+            row, col, __ = self.model.inverse_loc(lon, lat, h)
+        else:#Pyrugged_geom is used
+            if self.dtm is not None:
+                row, col, _ = self.model.inverse_loc(self.dtm, lon,lat, h)
+            else:# no Location object so we create one
+                location_dimap = Location(
+                    self.model.dimap,
+                    sensor_name="sensor_a",
+                    physical_data_dir=None,
+                    dem_path=None,
+                    geoid_path=None,
+                    alti_over_ellipsoid=0.0,
+                    light_time = self.model.light_time,
+                    aberration_light = self.model.aberration_light,
+                    atmospheric_refraction = self.model.atmospheric_refraction,
+                    transforms = self.model.transforms,
+                    )
+                row, col, _ = self.model.inverse_loc(location_dimap, lon, lat, h)
 
+   
         if using_geotransform and self.image is not None:
-            row, col = self.image.transform_physical_point_to_index(row, col)
+            row, col = self.image.transform_physical_point_to_index(np.array(row), np.array(col))
         return row, col, h
 
 
-def coloc(model1, model2, row, col, elevation=None, image1=None, image2=None, using_geotransform=False):
+def coloc(model1, model2, row, col, elevation=None, image1=None, image2=None, using_geotransform=False,elevation2=None,altitude=None):
     """
     Colocalization : direct localization with model1, then inverse localization with model2
 
     :param model1: geometric model 1
-    :type model1: shareloc.grid or  shareloc.rpc
+    :type model1: shareloc.grid or  shareloc.rpc or shareloc.Pyrugged_geom
     :param model2: geometric model 2
-    :type model2: shareloc.grid or  shareloc.rpc
+    :type model2: shareloc.grid or  shareloc.rpc or shareloc.Pyrugged_geom
     :param row: sensor row
     :type row: int or 1D numpy array
     :param col: sensor col
     :type col: int or 1D numpy array
     :param elevation: elevation
-    :type elevation: shareloc.dtm or float or 1D numpy array
+    :type elevation: shareloc.dtm or float or 1D numpy array or shareloc.location_dimap
+    :param elevation2: elevation2 (Location class linked to the rigth image dimap)
+    :type elevation2: shareloc.location_pydimap
     :param image1: image class to handle geotransform
     :type image1: shareloc.image.Image
     :param image2: image class to handle geotransform
@@ -184,14 +251,23 @@ def coloc(model1, model2, row, col, elevation=None, image1=None, image2=None, us
     :return: Corresponding sensor position [row, col, True] in the geometric model 2
     :rtype: Tuple(1D np.array row position, 1D np.array col position, 1D np.array alt)
     """
-    geometric_model1 = Localization(model1, elevation, image=image1)
-    geometric_model2 = Localization(model2, elevation, image=image2)
 
     if not isinstance(row, (list, np.ndarray)):
         row = np.array([row])
         col = np.array([col])
+        if altitude is not None:
+            altitude = np.array([altitude])
 
-    ground_coord = geometric_model1.direct(row, col, using_geotransform=using_geotransform)
+    if model1.__class__.__name__=="Pyrugged_geom" and elevation2 is not None:
+        geometric_model1 = Localization(model1, elevation, image=image1)
+        geometric_model2 = Localization(model2, elevation2, image=image2)
+        #print("altitude : ",altitude)
+        ground_coord = geometric_model1.direct(row, col, altitude, using_geotransform=using_geotransform)
+
+    else:
+        geometric_model1 = Localization(model1, elevation, image=image1)
+        geometric_model2 = Localization(model2, elevation, image=image2)
+        ground_coord = geometric_model1.direct(row, col, using_geotransform=using_geotransform)
 
     # Estimate sensor position (row, col, altitude) using inverse localization with model2
     sensor_coord = np.zeros((row.shape[0], 3), dtype=np.float64)
@@ -200,3 +276,4 @@ def coloc(model1, model2, row, col, elevation=None, image1=None, image2=None, us
     )
 
     return sensor_coord[:, 0], sensor_coord[:, 1], sensor_coord[:, 2]
+  

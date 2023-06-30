@@ -26,10 +26,12 @@ This module contains triangulation methods.
 import numpy as np
 
 # Shareloc imports
+from pyrugged.configuration.init_orekit import init_orekit
 from shareloc.geofunctions.rectification_grid import RectificationGrid
 from shareloc.geomodels.los import LOS
 from shareloc.proj_utils import coordinates_conversion
 
+init_orekit()
 
 def sensor_triangulation(
     matches,
@@ -54,9 +56,9 @@ def sensor_triangulation(
     :param matches:  matches in sensor coordinates Nx[row (left), col (left), row (right), col (right)]
     :type matches: np.array
     :param geometrical_model_left: left image geometrical model
-    :type geometrical_model_left: shareloc.grid or shareloc.rpc
+    :type geometrical_model_left: shareloc.grid or shareloc.rpc  or shareloc.Pyrugged_geom
     :param geometrical_model_right: right image geometrical model
-    :type geometrical_model_right: shareloc.grid or shareloc.rpc
+    :type geometrical_model_right: shareloc.grid or shareloc.rpc  or shareloc.Pyrugged_geom
     :param left_min_max: left min/max for los creation, if None model min/max will be used
     :type left_min_max: list
     :param right_min_max: right min/max for los creation, if None model min/max will be used
@@ -152,6 +154,7 @@ def transform_disp_to_matches(disp, mask=None):
 
     col, row = np.meshgrid(disp.col, disp.row)
     disp_array = disp.disp.values
+    #disp_array = disp.values
     if mask is not None:
         values_ok = mask > 0
         col = col[values_ok]
@@ -159,8 +162,8 @@ def transform_disp_to_matches(disp, mask=None):
         disp_array = disp_array[values_ok]
     else:
         values_ok = np.full_like(disp_array, True, dtype=bool)
-    epi_left_pos = np.vstack((col.flatten(), row.flatten()))
 
+    epi_left_pos = np.vstack((col.flatten(), row.flatten()))
     epi_right_pos = np.vstack((col.flatten() + disp_array.flatten(), row.flatten()))
     return (epi_left_pos.transpose(), epi_right_pos.transpose(), values_ok.flatten())
 
@@ -190,9 +193,9 @@ def epipolar_triangulation(
     :param matches_type:  'disp' or 'sift'
     :type matches_type: str
     :param geometrical_model_left: left image geometrical model
-    :type geometrical_model_left: shareloc.grid or shareloc.rpc
+    :type geometrical_model_left: shareloc.grid or shareloc.rpc  or shareloc.Pyrugged_geom
     :param geometrical_model_right: right image geometrical model
-    :type geometrical_model_right: shareloc.grid or shareloc.rpc
+    :type geometrical_model_right: shareloc.grid or shareloc.rpc  or shareloc.Pyrugged_geom
     :param grid_left: left rectification grid filename
     :type grid_left: str
     :param grid_right: right rectification grid filename
